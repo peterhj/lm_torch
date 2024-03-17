@@ -55,12 +55,12 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
 
     cfg = MistralConfig.mistral_7b()
     cfg.linear_scale = 16.0
-    print("INFO:     model config = {}".format(cfg))
+    print("INFO:   model config = {}".format(cfg))
 
     #loss_scale = None
     loss_scale = 1024.0
     if loss_scale is not None:
-        print("INFO:     loss scale = {}".format(loss_scale))
+        print("INFO:   loss scale = {}".format(loss_scale))
 
     tokenizer = SentencePieceTokenizer(os.path.join(MODEL_PATH, "tokenizer.model"))
     assert len(tokenizer) == cfg.tok_dim
@@ -108,7 +108,7 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
     for k in params:
         param_nan_ct += torch.count_nonzero(gpu_params[k].data.isnan()).to(device=smp)
     if param_nan_ct > 0:
-        print("DEBUG:    param nan ct = {}".format(param_nan_ct))
+        print("DEBUG:  param nan ct = {}".format(param_nan_ct))
     assert param_nan_ct == 0
 
     with torch.device(smp):
@@ -129,7 +129,7 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
             assert v.requires_grad
 
     for step, text_tok in enumerate(data):
-        print("INFO:     step = {}/{}".format(step, nstep))
+        print("INFO:   step = {}/{}".format(step, nstep))
 
         with torch.device(gpu):
             in_tok = text_tok.to(device=gpu)
@@ -156,7 +156,7 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
                     if ord(p[0]) == 9601:
                         p = " {}".format(p[1:])
                     ps.append(p)
-                print("INFO:         pos={} {} {} {} \"{}\" \"{}\" \"{}\"".format(i, *ts, *ps))
+                print("INFO:       pos={} {} {} {} \"{}\" \"{}\" \"{}\"".format(i, *ts, *ps))
 
         loss = 0.0
         for batch_idx in range(batch_size):
@@ -176,9 +176,9 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
             gpu_model.zero_grad()
             loss.backward()
 
-        print("INFO:     loss = {}".format(org_loss.to(device=smp).item()))
+        print("INFO:   loss = {}".format(org_loss.to(device=smp).item()))
         if loss_scale is not None:
-            print("INFO:     loss = {} (scaled x {})".format(loss.to(device=smp).item(), loss_scale))
+            print("INFO:   loss = {} (scaled x {})".format(loss.to(device=smp).item(), loss_scale))
 
         if step >= nstep:
             break
@@ -187,7 +187,7 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
         for k in params:
             grad_nan_ct += torch.count_nonzero(gpu_params[k].grad.data.isnan()).to(device=smp)
         if grad_nan_ct > 0:
-            print("DEBUG:    grad nan ct = {}".format(grad_nan_ct))
+            print("DEBUG:  grad nan ct = {}".format(grad_nan_ct))
         assert grad_nan_ct == 0
 
         for k in params:
@@ -205,7 +205,7 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
         for k, v in params.items():
             param_nan_ct += torch.count_nonzero(v.data.isnan())
         if param_nan_ct > 0:
-            print("DEBUG:    param nan ct = {}".format(param_nan_ct))
+            print("DEBUG:  param nan ct = {}".format(param_nan_ct))
         assert param_nan_ct == 0
 
         for k in params:
