@@ -70,14 +70,12 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
     params = dict()
     if model_format == "safetensors":
         import safetensors.torch
-        for tensors_file in sorted(glob("model-*-of-*.safetensors", root_dir = MODEL_PATH)):
-            tensors_path = os.path.join(MODEL_PATH, tensors_file)
-            params.update(safetensors.torch.load_file(tensors_path))
+        for f in sorted(glob("model-*-of-*.safetensors", root_dir = MODEL_PATH)):
+            params.update(safetensors.torch.load_file(os.path.join(MODEL_PATH, f)))
     elif model_format == "pickle":
         state = dict()
-        for pickle_file in sorted(glob("pytorch_model-*-of-*.bin", root_dir = MODEL_PATH)):
-            pickle_path = os.path.join(MODEL_PATH, pickle_file)
-            state.update(torch.load(pickle_path))
+        for f in sorted(glob("pytorch_model-*-of-*.bin", root_dir = MODEL_PATH)):
+            state.update(torch.load(os.path.join(MODEL_PATH, f)))
         for k, v in state.items():
             if k.find(".weight") != -1:
                 params[k] = v
@@ -124,7 +122,7 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
 
     with torch.device(gpu):
         loss_fn = nn.CrossEntropyLoss(reduction = "sum")
-        gpu_model = Mistral(cfg, batch_size, max_seq_len)
+        gpu_model = nn.utils.skip_init(Mistral, cfg, batch_size, max_seq_len, device=gpu)
         gpu_model.load_state_dict(gpu_params)
         gpu_params = dict(gpu_model.named_parameters())
         for _, v in gpu_params.items():
@@ -133,10 +131,11 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
     for step, text_tok in enumerate(data):
         print("INFO:     step = {}/{}".format(step, nstep))
 
-        in_tok = text_tok.to(device=gpu)
-        out_logit = gpu_model(in_tok)
-        out_lm_tok = torch.argmax(out_logit, 2, keepdim=False).to(dtype=i64)
-        text_lm_tok = out_lm_tok.to(device=smp)
+        with torch.device(gpu):
+            in_tok = text_tok.to(device=gpu)
+            out_logit = gpu_model(in_tok)
+            out_lm_tok = torch.argmax(out_logit, 2, keepdim=False).to(dtype=i64)
+            text_lm_tok = out_lm_tok.to(device=smp)
 
         in_tok_lens = []
         loss_denom = 0

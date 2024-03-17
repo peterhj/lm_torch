@@ -16,13 +16,6 @@ from enum import Enum
 from typing import Optional
 
 @dataclass
-class MistralConstants:
-    cos: torch.Tensor
-    sin: torch.Tensor
-    mask_w: torch.Tensor
-    mask_b: torch.Tensor
-
-@dataclass
 class MistralConfig:
     tok_dim: int
     num_layer: int
@@ -56,34 +49,56 @@ class MistralConfig:
                 q_group = 4,
         )
 
-    def constants(self, batch_size, max_seq_len, device = None) -> MistralConstants:
-        cfg = self
+class MistralLazyConstants:
+    def __init__(self, cfg, max_seq_len):
+        self.cfg = cfg
+        self.max_seq_len = max_seq_len
 
-        # cos, sin for rotary embedding.
-        base = torch.asarray(10000.0, dtype=f32, device=device)
-        exp_factor = torch.asarray(-2.0 / cfg.head_dim, dtype=f32, device=device)
-        exp = torch.arange(0, cfg.head_dim // 2, dtype=f32, device=device) * exp_factor
-        inv_freq = torch.pow(base, exp)
-        pos = torch.arange(0, max_seq_len, dtype=f32, device=device)
-        freq = torch.outer(pos, inv_freq)
-        freq2 = torch.tile(freq, (1, 2))
-        cos = torch.cos(freq2).to(dtype=f16)
-        sin = torch.sin(freq2).to(dtype=f16)
-        cos = cos.reshape((1, max_seq_len, 1, cfg.head_dim))
-        sin = sin.reshape((1, max_seq_len, 1, cfg.head_dim))
+    def _register_rot(self, mod):
+        if not (hasattr(self, "cos") and hasattr(self, "sin")):
+            # cos, sin for rotary embedding.
+            device = None
+            max_seq_len = self.max_seq_len
+            base = torch.asarray(10000.0, dtype=f32, device=device)
+            exp_factor = torch.asarray(-2.0 / self.cfg.head_dim, dtype=f32, device=device)
+            exp = torch.arange(0, self.cfg.head_dim // 2, dtype=f32, device=device) * exp_factor
+            inv_freq = torch.pow(base, exp)
+            pos = torch.arange(0, max_seq_len, dtype=f32, device=device)
+            freq = torch.outer(pos, inv_freq)
+            freq2 = torch.tile(freq, (1, 2))
+            cos = torch.cos(freq2).to(dtype=f16)
+            sin = torch.sin(freq2).to(dtype=f16)
+            cos = cos.reshape((1, max_seq_len, 1, self.cfg.head_dim))
+            sin = sin.reshape((1, max_seq_len, 1, self.cfg.head_dim))
+            self.cos = cos
+            self.sin = sin
+        if not (hasattr(mod, "cos") and hasattr(mod, "sin")):
+            mod.register_buffer("cos", self.cos, persistent=False)
+            mod.register_buffer("sin", self.sin, persistent=False)
 
-        # Causal attention mask, multiply-add style.
-        mask_w = torch.tril(torch.full((max_seq_len, max_seq_len), 1.0, dtype=f32, device=device), 0)
-        mask_b = torch.triu(torch.full((max_seq_len, max_seq_len), -torch.inf, dtype=f32, device=device), 1)
-        mask_w = mask_w.reshape((1, 1, max_seq_len, max_seq_len))
-        mask_b = mask_b.reshape((1, 1, max_seq_len, max_seq_len))
+    def _register_self_attn(self, mod):
+        if not (hasattr(self, "mask_w") and hasattr(self, "mask_b")):
+            # Causal attention mask, multiply-add style.
+            device = None
+            max_seq_len = self.max_seq_len
+            mask_w = torch.tril(torch.full((max_seq_len, max_seq_len), 1.0, dtype=f32, device=device), 0)
+            mask_b = torch.triu(torch.full((max_seq_len, max_seq_len), -torch.inf, dtype=f32, device=device), 1)
+            mask_w = mask_w.reshape((1, 1, max_seq_len, max_seq_len))
+            mask_b = mask_b.reshape((1, 1, max_seq_len, max_seq_len))
+            self.attn_scale = torch.reciprocal(torch.sqrt(torch.asarray(self.cfg.head_dim, dtype=f32, device=device)))
+            self.mask_w = mask_w
+            self.mask_b = mask_b
+        if not (hasattr(mod, "mask_w") and hasattr(mod, "mask_b")):
+            mod.register_buffer("attn_scale", self.attn_scale, persistent=False)
+            mod.register_buffer("mask_w", self.mask_w, persistent=False)
+            mod.register_buffer("mask_b", self.mask_b, persistent=False)
 
-        return MistralConstants(
-                cos = cos,
-                sin = sin,
-                mask_w = mask_w,
-                mask_b = mask_b,
-        )
+    def _register_linear(self, mod):
+        if not hasattr(self, "inv_linear_scale"):
+            device = None
+            self.inv_linear_scale = torch.reciprocal(torch.asarray(self.cfg.linear_scale, dtype=f16, device=device))
+        if not hasattr(mod, "inv_linear_scale"):
+            mod.register_buffer("inv_linear_scale", self.inv_linear_scale, persistent=False)
 
 class MistralImpl(Enum):
     TorchBuiltin = enum.auto()
@@ -109,7 +124,8 @@ class MistralRMSNorm(nn.Module):
     def __init__(self, cfg, device = None, layer_idx = None, label = None):
         super().__init__()
         self.inner_dim = cfg.num_head * cfg.head_dim
-        self.eps = torch.asarray(cfg.rms_norm_eps, dtype=f32, device=device)
+        self.eps = cfg.rms_norm_eps
+        #self.eps = torch.asarray(cfg.rms_norm_eps, dtype=f32, device=device)
         self.weight = nn.parameter.Parameter(torch.empty((self.inner_dim,), dtype=f16, device=device))
 
     def forward(self, stm):
@@ -130,22 +146,16 @@ class MistralRMSNorm(nn.Module):
 class MistralRotaryEmbedding(nn.Module):
     def __init__(self, cfg, consts, device = None, layer_idx = None):
         super().__init__()
-        self.register_buffer("cos", consts.cos, persistent=False)
-        self.register_buffer("sin", consts.sin, persistent=False)
+        self.consts = consts
 
     def forward(self, stm):
+        self.consts._register_rot(self)
         inner = stm.ndim - 1
         split = stm.shape[inner] // 2
         lstm, rstm = torch.split(stm, [split, split], inner)
         stm2 = torch.cat([-rstm, lstm], inner)
         stm = (stm * self.cos) + (stm2 * self.sin)
         return stm
-
-def _make_inv_linear_scale(cfg):
-    if cfg.linear_scale is not None:
-        return torch.reciprocal(torch.asarray(cfg.linear_scale, dtype=f16))
-    else:
-        return None
 
 class MistralSelfAttention(nn.Module):
     def __init__(self, cfg, consts, device = None, impl = MistralImpl.Default, layer_idx = None):
@@ -155,17 +165,16 @@ class MistralSelfAttention(nn.Module):
         self.num_kv_head = cfg.num_head // cfg.q_group
         self.q_group = cfg.q_group
         self.kv_inner_dim = self.num_kv_head * cfg.head_dim
-        self.attn_scale = torch.reciprocal(torch.sqrt(torch.asarray(cfg.head_dim, dtype=f32, device=device)))
-        self.inv_linear_scale = _make_inv_linear_scale(cfg)
-        self.register_buffer("mask_w", consts.mask_w, persistent=False)
-        self.register_buffer("mask_b", consts.mask_b, persistent=False)
-        self.rot = MistralRotaryEmbedding(cfg, consts)
+        self.consts = consts
+        self.rot = MistralRotaryEmbedding(cfg, consts, device, layer_idx)
         self.q_proj = nn.Linear(self.inner_dim, self.inner_dim, bias=False, dtype=f16, device=device)
         self.k_proj = nn.Linear(self.inner_dim, self.kv_inner_dim, bias=False, dtype=f16, device=device)
         self.v_proj = nn.Linear(self.inner_dim, self.kv_inner_dim, bias=False, dtype=f16, device=device)
         self.o_proj = nn.Linear(self.inner_dim, self.inner_dim, bias=False, dtype=f16, device=device)
 
     def forward(self, stm):
+        self.consts._register_self_attn(self)
+        self.consts._register_linear(self)
         stmshape = stm.shape
         stm = stm.reshape((stmshape[0] * stmshape[1], stmshape[2] * stmshape[3]))
         q_stm = self.q_proj(stm)
@@ -218,16 +227,17 @@ def silu(x, impl = MistralImpl.Default):
         raise NotImplementedError
 
 class MistralMLP(nn.Module):
-    def __init__(self, cfg, device = None, impl = MistralImpl.Default, layer_idx = None):
+    def __init__(self, cfg, consts, device = None, impl = MistralImpl.Default, layer_idx = None):
         super().__init__()
         self.impl = impl
         self.inner_dim = cfg.num_head * cfg.head_dim
-        self.inv_linear_scale = _make_inv_linear_scale(cfg)
+        self.consts = consts
         self.gate_proj = nn.Linear(self.inner_dim, cfg.mlp_inner_dim, bias=False, dtype=f16, device=device)
         self.up_proj = nn.Linear(self.inner_dim, cfg.mlp_inner_dim, bias=False, dtype=f16, device=device)
         self.down_proj = nn.Linear(cfg.mlp_inner_dim, self.inner_dim, bias=False, dtype=f16, device=device)
 
     def forward(self, stm):
+        self.consts._register_linear(self)
         stmshape = stm.shape
         stm = stm.reshape((stmshape[0] * stmshape[1], stmshape[2] * stmshape[3]))
         gate_stm = self.gate_proj(stm)
@@ -249,7 +259,7 @@ class MistralLayer(nn.Module):
         self.input_layernorm = MistralRMSNorm(cfg, device, layer_idx, label = "pre_attn")
         self.self_attn = MistralSelfAttention(cfg, consts, device, impl, layer_idx)
         self.post_attention_layernorm = MistralRMSNorm(cfg, device, layer_idx, label = "postattn")
-        self.mlp = MistralMLP(cfg, device, impl, layer_idx)
+        self.mlp = MistralMLP(cfg, consts, device, impl, layer_idx)
 
     def forward(self, stm):
         residual_stm = stm
@@ -269,8 +279,8 @@ class Mistral(nn.Module):
         self.num_head = cfg.num_head
         self.head_dim = cfg.head_dim
         self.inner_dim = cfg.num_head * cfg.head_dim
-        self.inv_linear_scale = _make_inv_linear_scale(cfg)
-        consts = cfg.constants(batch_size, max_seq_len, device)
+        consts = MistralLazyConstants(cfg, max_seq_len)
+        self.consts = consts
         if impl == MistralImpl.TorchBuiltin:
             self.embed_tokens = nn.Embedding(cfg.tok_dim, self.inner_dim, dtype=f16, device=device)
         elif impl == MistralImpl.Debug:
@@ -284,6 +294,7 @@ class Mistral(nn.Module):
         self.lm_head = nn.Linear(self.inner_dim, cfg.tok_dim, bias=False, dtype=f16, device=device)
 
     def forward(self, tok):
+        self.consts._register_linear(self)
         batch_size, seq_len = tok.shape
         stm = self.embed_tokens(tok)
         stm = stm.reshape((batch_size, seq_len, self.num_head, self.head_dim))
