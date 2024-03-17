@@ -1,0 +1,23 @@
+[project]
+name = "mistral_fp16_torch"
+requires-python = ">=3.10"
+dynamic = ["version"]
+description = "pure pytorch implementation of mistral 7b in fp16"
+authors = [
+  { name = "Peter Jin" },
+]
+keywords = []
+license = { text = "Apache-2.0" }
+readme = "README.md"
+dependencies = [
+  "sentencepiece>=0.2.0",
+  "torch>=2.0",
+  "torch_prelude @ git+https://github.com/peterhj/torch_prelude",
+]
+classifiers = []
+
+[project.optional-dependencies]
+examples = [
+  "fire>=0.6.0",
+  "safetensors>=0.4.0",
+]
