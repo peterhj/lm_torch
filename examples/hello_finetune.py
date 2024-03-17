@@ -64,25 +64,29 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
     for k, v in state.items():
       if k.find(".weight") != -1:
         params[k] = v
+    del state
   else: raise ValueError("unsupported value for --model-format")
   save_params = params
 
   params = dict()
   with torch.device(smp):
-    for k, v in save_params.items():
+    for save_k in list(save_params.keys()):
+      k = save_k
       if k.find("model.") == 0:
         k = k[6:]
+      params[k] = save_params[save_k].to(dtype=f32)
       if cfg.linear_scale is not None and (
           k.find("_proj") != -1 or k.find("_head") != -1
       ):
-        params[k] = v.to(dtype=f32) * cfg.linear_scale
-      else:
-        params[k] = v.to(dtype=f32)
+        params[k].data.mul_(cfg.linear_scale)
+      del save_params[save_k]
+  del save_params
 
   gpu_params = dict()
   with torch.device(gpu):
     for k, v in params.items():
       gpu_params[k] = v.to(dtype=f16, device=gpu)
+      v.detach_()
 
   param_nan_ct = 0
   for k in params:
