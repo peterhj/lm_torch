@@ -1,17 +1,20 @@
-from mistral_fp16_torch import MistralConfig, Mistral
-from mistral_fp16_torch.sentencepiece import SentencePieceTokenizer
+from mistral_torch import MistralConfig, Mistral
+from mistral_torch.sentencepiece import SentencePieceTokenizer
 
 from torch_prelude import gpu, smp, f16, f32, i64
 import torch
-import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from fire import Fire
 
 from glob import glob
 from itertools import repeat
 import os
+import time
 from typing import Optional
+
+def lap():
+    torch.cuda.synchronize()
+    return time.clock_gettime(time.CLOCK_REALTIME)
 
 class HelloDataset(Dataset):
     text = ("Thucydides, an Athenian, wrote the history of the war between"
@@ -48,7 +51,12 @@ class HelloDataset(Dataset):
             text_tok.append(0)
         return torch.asarray(text_tok, dtype=i64, device=smp)
 
-def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
+def main(
+        MODEL_PATH: str,
+        model_format: Optional[str] = "safetensors",
+        dtype: Optional[str] = "float16",
+        bench: Optional[bool] = False,
+):
     batch_size = 1
     max_seq_len = 256
     nstep = 4
@@ -66,6 +74,18 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
     assert len(tokenizer) == cfg.tok_dim
 
     data = DataLoader(HelloDataset(max_seq_len, tokenizer), sampler = repeat(0), batch_size = batch_size)
+
+    if dtype == "float16" or dtype == "f16":
+        dtype = f16
+    elif dtype == "float32" or dtype == "f32":
+        dtype = f32
+    elif dtype == "bfloat16" or dtype == "bf16":
+        dtype = bf16
+    else:
+        raise ValueError("unsupported value for --dtype")
+
+    if bench:
+        pre_init_t0 = lap()
 
     params = dict()
     if model_format == "safetensors":
@@ -98,11 +118,25 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
             del save_params[save_k]
     del save_params
 
-    gpu_params = dict()
+    if bench:
+        pre_init_t1 = lap()
+
+    if bench:
+        print("INFO:   bench: model load = {:.06} s".format(pre_init_t1-pre_init_t0))
+
     with torch.device(gpu):
-        for k, v in params.items():
-            gpu_params[k] = v.to(dtype=f16, device=gpu)
-            v.detach_()
+        if bench:
+            init_t0 = lap()
+        gpu_model = torch.nn.utils.skip_init(Mistral, cfg, batch_size, max_seq_len, dtype=dtype, device=gpu)
+        gpu_params = dict(gpu_model.named_parameters())
+        for k in params:
+            assert gpu_params[k].requires_grad
+            gpu_params[k].data.copy_(params[k])
+        if bench:
+            init_t1 = lap()
+
+    if bench:
+        print("INFO:   bench: model init = {:.06} s".format(init_t1-init_t0))
 
     param_nan_ct = 0
     for k in params:
@@ -111,8 +145,11 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
         print("DEBUG:  param nan ct = {}".format(param_nan_ct))
     assert param_nan_ct == 0
 
+    with torch.device(gpu):
+        loss_fn = torch.nn.CrossEntropyLoss(reduction = "sum")
+
     with torch.device(smp):
-        adamw = optim.AdamW(
+        adamw = torch.optim.AdamW(
                 params.values(),
                 lr = 2.0e-5,
                 betas = (0.9, 0.95),
@@ -120,22 +157,21 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
                 weight_decay = 0.1,
         )
 
-    with torch.device(gpu):
-        loss_fn = nn.CrossEntropyLoss(reduction = "sum")
-        gpu_model = nn.utils.skip_init(Mistral, cfg, batch_size, max_seq_len, device=gpu)
-        gpu_model.load_state_dict(gpu_params)
-        gpu_params = dict(gpu_model.named_parameters())
-        for _, v in gpu_params.items():
-            assert v.requires_grad
-
     for step, text_tok in enumerate(data):
         print("INFO:   step = {}/{}".format(step, nstep))
 
         with torch.device(gpu):
             in_tok = text_tok.to(device=gpu)
+            if bench:
+                fwd_t0 = lap()
             out_logit = gpu_model(in_tok)
             out_lm_tok = torch.argmax(out_logit, 2, keepdim=False).to(dtype=i64)
+            if bench:
+                fwd_t1 = lap()
             text_lm_tok = out_lm_tok.to(device=smp)
+
+        if bench:
+            print("INFO:   bench: fwd = {:.06} s".format(fwd_t1-fwd_t0))
 
         in_tok_lens = []
         loss_denom = 0
@@ -174,7 +210,15 @@ def main(MODEL_PATH: str, model_format: Optional[str] = "pickle"):
             pass
         else:
             gpu_model.zero_grad()
+            if bench:
+                bwd_t0 = lap()
             loss.backward()
+            if bench:
+                bwd_t1 = lap()
+
+        if bench:
+            #print("INFO:   bench: fwd = {:.06} s, bwd = {:.06} s".format(fwd_t1-fwd_t0, bwd_t1-bwd_t0))
+            print("INFO:   bench: bwd = {:.06} s".format(bwd_t1-bwd_t0))
 
         print("INFO:   loss = {}".format(org_loss.to(device=smp).item()))
         if loss_scale is not None:

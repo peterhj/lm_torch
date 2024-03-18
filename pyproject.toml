@@ -1,8 +1,8 @@
 [project]
-name = "mistral_fp16_torch"
+name = "mistral_torch"
 requires-python = ">=3.10"
 dynamic = ["version"]
-description = "pure pytorch implementation of mistral 7b in fp16"
+description = "pure pytorch implementation of mistral 7b"
 authors = [
   { name = "Peter Jin" },
 ]
