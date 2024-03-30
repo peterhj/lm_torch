@@ -367,32 +367,28 @@ class CachedMistralSelfAttention(torch.nn.Module):
         self.tagged_k_caches = dict()
         self.tagged_v_caches = dict()
 
+    def fresh_cache_buf(self):
+        bufshape = (self.batch_size, self.max_seq_len, self.num_head, self.head_dim)
+        return torch.zeros(bufshape, dtype=self.dtype)
+
     def k_cache(self, cache_tag = None):
         if cache_tag is not None:
             if cache_tag not in self.tagged_k_caches:
-                bufshape = (self.batch_size, self.max_seq_len, self.num_head, self.head_dim)
-                buf = torch.zeros(bufshape, dtype=self.dtype)
-                self.tagged_k_caches[cache_tag] = buf
+                self.tagged_k_caches[cache_tag] = self.fresh_cache_buf()
             return self.tagged_k_caches[cache_tag]
         else:
             if self.default_k_cache is None:
-                bufshape = (self.batch_size, self.max_seq_len, self.num_head, self.head_dim)
-                buf = torch.zeros(bufshape, dtype=self.dtype)
-                self.default_k_cache = buf
+                self.default_k_cache = self.fresh_cache_buf()
             return self.default_k_cache
 
     def v_cache(self, cache_tag = None):
         if cache_tag is not None:
             if cache_tag not in self.tagged_v_caches:
-                bufshape = (self.batch_size, self.max_seq_len, self.num_head, self.head_dim)
-                buf = torch.zeros(bufshape, dtype=self.dtype)
-                self.tagged_v_caches[cache_tag] = buf
+                self.tagged_v_caches[cache_tag] = self.fresh_cache_buf()
             return self.tagged_v_caches[cache_tag]
         else:
             if self.default_v_cache is None:
-                bufshape = (self.batch_size, self.max_seq_len, self.num_head, self.head_dim)
-                buf = torch.zeros(bufshape, dtype=self.dtype)
-                self.default_v_cache = buf
+                self.default_v_cache = self.fresh_cache_buf()
             return self.default_v_cache
 
     def forward(self, stm, seq_start = 0, cache_tag = None):
