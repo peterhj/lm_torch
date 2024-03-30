@@ -6,7 +6,7 @@ __all__ = [
 
 import sentencepiece as sp
 
-from typing import List
+from typing import List, Optional
 
 class SentencePieceTokenizer:
     def __init__(self, path = None):
@@ -30,17 +30,35 @@ class SentencePieceTokenizer:
 
     def __getitem__(self, key: int | str) -> str | int:
         if isinstance(key, int):
-            return self.spp.IdToPiece(key)
+            val = self.spp.IdToPiece(key)
+            # NB: hard coded.
+            if key == 3 + 0x0a:
+                val = "\n"
+            elif ord(val[0]) == 9601:
+                val2 = [" "]
+                for k in range(1, len(val)):
+                    if ord(val[k]) != 9601:
+                        val2.append(val[k:])
+                        break
+                    val2.append(" ")
+                val = "".join(val2)
+            return val
         if isinstance(key, str):
             idx = self.spp.PieceToId(key)
-            # FIXME: pad token index.
+            # NB: pad token index.
             if idx == 0 and key != self._unk_piece():
                 raise IndexError
             return idx
         raise IndexError
 
-    def __call__(self, text: str) -> List[int]:
-        return self.spp.Encode(text, add_bos = True)
+    def __call__(self, text: str, prepend: Optional[bool] = True) -> List[int]:
+        if prepend is None or not prepend:
+            tok = self.spp.Encode("<p>{}".format(text), add_bos = True)
+            assert tok[:4] == [1, 523, 28720, 28767]
+            tok = tok[4:]
+        else:
+            tok = self.spp.Encode(text, add_bos = True)
+        return tok
 
 MistralTokenizer = SentencePieceTokenizer
 LlamaTokenizer = SentencePieceTokenizer
