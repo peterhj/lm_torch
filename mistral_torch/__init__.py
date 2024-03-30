@@ -363,7 +363,7 @@ class CachedMistralSelfAttention(torch.nn.Module):
         self.v_proj = torch.nn.Linear(self.inner_dim, self.kv_inner_dim, bias=False, dtype=dtype, device=device)
         self.o_proj = torch.nn.Linear(self.inner_dim, self.inner_dim, bias=False, dtype=dtype, device=device)
 
-    def forward(self, stm, seq_start = None):
+    def forward(self, stm, seq_start = 0):
         self.consts._register_self_attn(self)
         self.consts._register_linear(self)
         if not hasattr(self, "k_cache"):
@@ -374,8 +374,6 @@ class CachedMistralSelfAttention(torch.nn.Module):
             bufshape = (self.batch_size, self.max_seq_len, self.num_head, self.head_dim)
             buf = torch.zeros(bufshape, dtype=self.dtype)
             self.register_buffer("v_cache", buf, persistent=False)
-        if seq_start is None:
-            seq_start = 0
         stmshape = stm.shape
         seq_len = stmshape[1]
         seq_end = seq_start + seq_len
@@ -424,7 +422,7 @@ class CachedMistralLayer(torch.nn.Module):
         self.post_attention_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "postattn")
         self.mlp = MistralMLP(cfg, consts, dtype, device, impl, layer_idx)
 
-    def forward(self, stm, seq_start = None):
+    def forward(self, stm, seq_start = 0):
         residual_stm = stm
         stm = self.input_layernorm(stm)
         stm = self.self_attn(stm, seq_start)
@@ -460,7 +458,7 @@ class CachedMistral(torch.nn.Module):
         self.norm = MistralRMSNorm(cfg, dtype, device)
         self.lm_head = torch.nn.Linear(self.inner_dim, cfg.tok_dim, bias=False, dtype=dtype, device=device)
 
-    def forward(self, tok, seq_start = None):
+    def forward(self, tok, seq_start = 0):
         self.consts._register_linear(self)
         batch_size, seq_len = tok.shape
         stm = self.embed_tokens(tok)
