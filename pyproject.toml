@@ -1,5 +1,5 @@
 [project]
-name = "mistral_torch"
+name = "lm_torch"
 requires-python = ">=3.10"
 dynamic = ["version"]
 description = "pure pytorch implementation of mistral 7b"
@@ -11,7 +11,7 @@ license = { text = "Apache-2.0" }
 readme = "README.md"
 dependencies = [
   "sentencepiece>=0.2.0",
-  "torch>=2.0",
+  "torch>=2.1",
   "torch_prelude @ git+https://github.com/peterhj/torch_prelude",
 ]
 classifiers = []

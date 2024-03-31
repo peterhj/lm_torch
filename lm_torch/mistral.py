@@ -345,7 +345,7 @@ class Mistral(torch.nn.Module):
         return tuple(out)
 
 class CachedMistralSelfAttention(torch.nn.Module):
-    def __init__(self, cfg, batch_size, max_seq_len, consts, dtype = f16, device = None, layer_idx = None):
+    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = f16, device = None, layer_idx = None):
         super().__init__()
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.head_dim = cfg.head_dim
@@ -354,7 +354,7 @@ class CachedMistralSelfAttention(torch.nn.Module):
         self.q_group = cfg.q_group
         self.kv_inner_dim = self.num_kv_head * cfg.head_dim
         self.dtype = dtype
-        self.batch_size = batch_size
+        self.max_batch_size = max_batch_size
         self.max_seq_len = max_seq_len
         self.consts = consts
         self.rot = MistralRotaryEmbedding(cfg, consts, dtype, device, layer_idx)
@@ -368,7 +368,7 @@ class CachedMistralSelfAttention(torch.nn.Module):
         self.tagged_v_caches = dict()
 
     def fresh_cache_buf(self):
-        bufshape = (self.batch_size, self.max_seq_len, self.num_head, self.head_dim)
+        bufshape = (self.max_batch_size, self.max_seq_len, self.num_head, self.head_dim)
         return torch.zeros(bufshape, dtype=self.dtype)
 
     def k_cache(self, cache_tag = None):
@@ -437,10 +437,10 @@ class CachedMistralSelfAttention(torch.nn.Module):
         return stm
 
 class CachedMistralLayer(torch.nn.Module):
-    def __init__(self, cfg, batch_size, max_seq_len, consts, dtype = f16, device = None, impl = MistralImpl.Default, layer_idx = None):
+    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = f16, device = None, impl = MistralImpl.Default, layer_idx = None):
         super().__init__()
         self.input_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "pre_attn")
-        self.self_attn = CachedMistralSelfAttention(cfg, batch_size, max_seq_len, consts, dtype, device, layer_idx)
+        self.self_attn = CachedMistralSelfAttention(cfg, max_batch_size, max_seq_len, consts, dtype, device, layer_idx)
         self.post_attention_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "postattn")
         self.mlp = MistralMLP(cfg, consts, dtype, device, impl, layer_idx)
 
@@ -456,7 +456,7 @@ class CachedMistralLayer(torch.nn.Module):
         return stm
 
 class CachedMistral(torch.nn.Module):
-    def __init__(self, cfg, batch_size, max_seq_len, head = "lm", dtype = f16, device = None):
+    def __init__(self, cfg, max_batch_size, max_seq_len, head = "lm", dtype = f16, device = None):
         super().__init__()
         self.tok_dim = cfg.tok_dim
         self.num_head = cfg.num_head
@@ -476,7 +476,7 @@ class CachedMistral(torch.nn.Module):
         self.embed_tokens = torch.nn.Embedding(cfg.tok_dim, self.inner_dim, dtype=dtype, device=device)
         self.layers = torch.nn.ModuleList()
         for layer_idx in range(cfg.num_layer):
-            self.layers.append(CachedMistralLayer(cfg, batch_size, max_seq_len, consts, dtype, device, impl, layer_idx))
+            self.layers.append(CachedMistralLayer(cfg, max_batch_size, max_seq_len, consts, dtype, device, impl, layer_idx))
         self.norm = MistralRMSNorm(cfg, dtype, device)
         self.lm_head = torch.nn.Linear(self.inner_dim, cfg.tok_dim, bias=False, dtype=dtype, device=device)
 

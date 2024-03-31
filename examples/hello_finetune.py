@@ -1,7 +1,7 @@
-from mistral_torch import MistralConfig, Mistral
-from mistral_torch.sentencepiece import SentencePieceTokenizer
+from lm_torch.prelude import gpu, smp, f16, f32, i64
+from lm_torch.mistral import MistralConfig, Mistral
+from lm_torch.sentencepiece import SentencePieceTokenizer
 
-from torch_prelude import gpu, smp, f16, f32, i64
 import torch
 from torch.utils.data import DataLoader, Dataset
 from fire import Fire
