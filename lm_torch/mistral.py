@@ -206,21 +206,24 @@ class MistralSelfAttention(torch.nn.Module):
         q_stm = self.rot(q_stm)
         k_stm = self.rot(k_stm)
         q_stm = q_stm.transpose(1, 2)
-        k_stm = k_stm.transpose(1, 2).transpose(2, 3)
-        attn = torch.matmul(q_stm, k_stm).to(dtype=f32) * self.attn_scale
-        attn = attn * self.mask_w + self.mask_b
-        if self.impl == MistralImpl.TorchBuiltin:
-            attn = torch.nn.functional.softmax(attn, 3)
-        elif self.impl == MistralImpl.Debug:
-            max_attn, _ = torch.max(attn, 3, keepdim=True)
-            exp_attn = torch.exp(attn - max_attn)
-            sum_exp_attn = torch.sum(exp_attn, 3, keepdim=True)
-            attn = (exp_attn / sum_exp_attn)
-        else:
-            raise NotImplementedError
-        attn = attn.to(dtype=self.dtype)
+        k_stm = k_stm.transpose(1, 2)
         v_stm = v_stm.transpose(1, 2)
-        o_stm = torch.matmul(attn, v_stm)
+        if False:
+            attn = torch.matmul(q_stm, k_stm.transpose(2, 3)).to(dtype=f32) * self.attn_scale
+            attn = attn * self.mask_w + self.mask_b
+            if self.impl == MistralImpl.TorchBuiltin:
+                attn = torch.nn.functional.softmax(attn, 3)
+            elif self.impl == MistralImpl.Debug:
+                max_attn, _ = torch.max(attn, 3, keepdim=True)
+                exp_attn = torch.exp(attn - max_attn)
+                sum_exp_attn = torch.sum(exp_attn, 3, keepdim=True)
+                attn = (exp_attn / sum_exp_attn)
+            else:
+                raise NotImplementedError
+            attn = attn.to(dtype=self.dtype)
+            o_stm = torch.matmul(attn, v_stm)
+        else:
+            o_stm = torch.nn.functional.scaled_dot_product_attention(q_stm, k_stm, v_stm, is_causal=True)
         o_stm = o_stm.transpose(1, 2)
         o_stm = o_stm.reshape((stmshape[0] * stmshape[1], stmshape[2] * stmshape[3]))
         o_stm = self.o_proj(o_stm)
@@ -421,13 +424,16 @@ class CachedMistralSelfAttention(torch.nn.Module):
         v_cache[:,seq_start:seq_end,:,:] = v_stm
         q_stm = q_stm.transpose(1, 2)
         k_stm = k_cache[:,:seq_end,:,:]
-        k_stm = k_stm.transpose(1, 2).transpose(2, 3)
-        attn = torch.matmul(q_stm, k_stm).to(dtype=f32) * self.attn_scale
-        attn = attn * self.mask_w[:,:,seq_start:seq_end,:seq_end] + self.mask_b[:,:,seq_start:seq_end,:seq_end]
-        attn = torch.nn.functional.softmax(attn, 3).to(dtype=self.dtype)
+        k_stm = k_stm.transpose(1, 2)
         v_stm = v_cache[:,:seq_end,:,:]
         v_stm = v_stm.transpose(1, 2)
-        o_stm = torch.matmul(attn, v_stm)
+        if True:
+            attn = torch.matmul(q_stm, k_stm.transpose(2, 3)).to(dtype=f32) * self.attn_scale
+            attn = attn * self.mask_w[:,:,seq_start:seq_end,:seq_end] + self.mask_b[:,:,seq_start:seq_end,:seq_end]
+            attn = torch.nn.functional.softmax(attn, 3).to(dtype=self.dtype)
+            o_stm = torch.matmul(attn, v_stm)
+        else:
+            o_stm = torch.nn.functional.scaled_dot_product_attention(q_stm, k_stm, v_stm, is_causal=True)
         o_stm = o_stm.transpose(1, 2)
         o_stm = o_stm.reshape((stmshape[0] * stmshape[1], stmshape[2] * stmshape[3]))
         o_stm = self.o_proj(o_stm)
