@@ -2,7 +2,7 @@
 name = "lm_torch"
 requires-python = ">=3.10"
 dynamic = ["version"]
-description = "pure pytorch implementation of mistral 7b"
+description = ""
 authors = [
   { name = "Peter Jin" },
 ]
@@ -12,7 +12,6 @@ readme = "README.md"
 dependencies = [
   "sentencepiece>=0.2.0",
   "torch>=2.1",
-  "torch_prelude @ git+https://github.com/peterhj/torch_prelude",
 ]
 classifiers = []
 
