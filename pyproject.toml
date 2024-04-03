@@ -10,6 +10,7 @@ keywords = []
 license = { text = "Apache-2.0" }
 readme = "README.md"
 dependencies = [
+  "safetensors>=0.4.0",
   "sentencepiece>=0.2.0",
   "torch>=2.1",
 ]
@@ -18,5 +19,4 @@ classifiers = []
 [project.optional-dependencies]
 examples = [
   "fire>=0.6.0",
-  "safetensors>=0.4.0",
 ]
