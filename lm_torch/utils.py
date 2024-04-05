@@ -1,5 +1,7 @@
 __all__ = [
     "reseed_torch",
+    "load_params",
+    "load_params_to",
     "load_params_to_f32",
 ]
 
@@ -40,12 +42,15 @@ def load_params(model_path, model_format = "safetensors"):
     del save_params
     return params
 
-def load_params_to_f32(model_path, model_format = "safetensors"):
+def load_params_to(model_path, model_format = "safetensors", dtype = f32):
     save_params = load_params(model_path, model_format)
     params = dict()
     with torch.device(smp):
         for k in list(save_params.keys()):
-            params[k] = save_params[k].to(dtype=f32)
+            params[k] = save_params[k].to(dtype=dtype)
             del save_params[k]
     del save_params
     return params
+
+def load_params_to_f32(model_path, model_format = "safetensors"):
+    return load_params_to(model_path, model_format, dtype = f32)

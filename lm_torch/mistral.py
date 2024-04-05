@@ -211,7 +211,7 @@ class MistralSelfAttention(torch.nn.Module):
         q_stm = q_stm.transpose(1, 2)
         k_stm = k_stm.transpose(1, 2)
         v_stm = v_stm.transpose(1, 2)
-        if False:
+        if True:
             attn = torch.matmul(q_stm, k_stm.transpose(2, 3)).to(dtype=f32) * self.attn_scale
             attn = attn * self.mask_w + self.mask_b
             if self.impl == MistralImpl.TorchBuiltin:
