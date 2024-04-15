@@ -7,7 +7,7 @@ __all__ = [
     "CachedLlama",
 ]
 
-from .prelude import f16, f32, i64
+from .prelude import f16, f32, i64, cpu
 
 import torch
 
@@ -23,9 +23,10 @@ class MistralConfig:
     num_head: int
     head_dim: int
     mlp_inner_dim: int
-    rms_norm_eps: float
-    linear_scale: Optional[float] = None
     q_group: int = 1
+    rms_norm_eps: float = 1.0e-5
+    rope_base: float = 10000.0
+    linear_scale: Optional[float] = None
 
     @staticmethod
     def llama_7b():
@@ -35,7 +36,6 @@ class MistralConfig:
                 num_head = 32,
                 head_dim = 128,
                 mlp_inner_dim = 11008,
-                rms_norm_eps = 1.0e-5,
         )
 
     @staticmethod
@@ -46,7 +46,6 @@ class MistralConfig:
                 num_head = 32,
                 head_dim = 128,
                 mlp_inner_dim = 14336,
-                rms_norm_eps = 1.0e-5,
                 q_group = 4,
         )
 
@@ -57,11 +56,11 @@ class MistralLazyConstants:
 
     def _register_rot(self, mod):
         if not (hasattr(self, "cos") and hasattr(self, "sin")):
-            # cos, sin for rotary embedding.
+            # cos, sin for rotary position embedding.
             dtype = mod.dtype
             device = None
             max_seq_len = self.max_seq_len
-            base = torch.asarray(10000.0, dtype=f32, device=device)
+            base = torch.asarray(self.cfg.rope_base, dtype=f32, device=device)
             exp_factor = torch.asarray(-2.0 / self.cfg.head_dim, dtype=f32, device=device)
             exp = torch.arange(0, self.cfg.head_dim // 2, dtype=f32, device=device) * exp_factor
             inv_freq = torch.pow(base, exp)
@@ -87,7 +86,7 @@ class MistralLazyConstants:
             mask_b = torch.triu(torch.full((max_seq_len, max_seq_len), -torch.inf, dtype=f32, device=device), 1)
             mask_w = mask_w.reshape((1, 1, max_seq_len, max_seq_len))
             mask_b = mask_b.reshape((1, 1, max_seq_len, max_seq_len))
-            self.attn_scale = torch.reciprocal(torch.sqrt(torch.asarray(self.cfg.head_dim, dtype=f32, device=device)))
+            self.attn_scale = torch.reciprocal(torch.sqrt(torch.asarray(self.cfg.head_dim, dtype=f32, device=cpu)))
             self.mask_w = mask_w
             self.mask_b = mask_b
         if not (hasattr(mod, "mask_w") and hasattr(mod, "mask_b")):
@@ -100,7 +99,7 @@ class MistralLazyConstants:
             if self.cfg.linear_scale is not None:
                 dtype = mod.dtype
                 device = None
-                self.inv_linear_scale = torch.reciprocal(torch.asarray(self.cfg.linear_scale, dtype=dtype, device=device))
+                self.inv_linear_scale = torch.reciprocal(torch.asarray(self.cfg.linear_scale, dtype=f32, device=cpu))
             else:
                 self.inv_linear_scale = None
         if not hasattr(mod, "inv_linear_scale"):

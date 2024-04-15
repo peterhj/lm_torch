@@ -14,7 +14,8 @@ def _init_torch_gpus():
         gpus.append(torch.device("cuda", idx))
     return gpus
 
-smp = torch.device("cpu")
+cpu = torch.device("cpu")
+smp = cpu
 gpus = _init_torch_gpus()
 gpu = None
 if len(gpus) > 0:
