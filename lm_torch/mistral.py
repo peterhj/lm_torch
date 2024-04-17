@@ -86,7 +86,7 @@ class MistralLazyConstants:
             mask_b = torch.triu(torch.full((max_seq_len, max_seq_len), -torch.inf, dtype=f32, device=device), 1)
             mask_w = mask_w.reshape((1, 1, max_seq_len, max_seq_len))
             mask_b = mask_b.reshape((1, 1, max_seq_len, max_seq_len))
-            self.attn_scale = torch.reciprocal(torch.sqrt(torch.asarray(self.cfg.head_dim, dtype=f32, device=cpu)))
+            self.attn_scale = torch.rsqrt(torch.asarray(self.cfg.head_dim, dtype=f32, device=cpu))
             self.mask_w = mask_w
             self.mask_b = mask_b
         if not (hasattr(mod, "mask_w") and hasattr(mod, "mask_b")):
@@ -99,7 +99,7 @@ class MistralLazyConstants:
             if self.cfg.linear_scale is not None:
                 dtype = mod.dtype
                 device = None
-                self.inv_linear_scale = torch.reciprocal(torch.asarray(self.cfg.linear_scale, dtype=f32, device=cpu))
+                self.inv_linear_scale = torch.reciprocal(torch.asarray(self.cfg.linear_scale, dtype=dtype, device=cpu))
             else:
                 self.inv_linear_scale = None
         if not hasattr(mod, "inv_linear_scale"):
@@ -107,12 +107,6 @@ class MistralLazyConstants:
                 mod.register_buffer("inv_linear_scale", self.inv_linear_scale, persistent=False)
             else:
                 mod.inv_linear_scale = None
-
-class MistralImpl(Enum):
-    TorchBuiltin = enum.auto()
-    Debug = enum.auto()
-
-    Default = TorchBuiltin
 
 class MistralTokenEmbedding(torch.nn.Module):
     def __init__(self, cfg, dtype = f16, device = None):
@@ -170,9 +164,8 @@ class MistralRotaryEmbedding(torch.nn.Module):
         return stm
 
 class MistralSelfAttention(torch.nn.Module):
-    def __init__(self, cfg, consts, dtype = f16, device = None, impl = MistralImpl.Default, layer_idx = None):
+    def __init__(self, cfg, consts, dtype = f16, device = None, layer_idx = None):
         super().__init__()
-        self.impl = impl
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.num_kv_head = cfg.num_head // cfg.q_group
         self.q_group = cfg.q_group
@@ -213,15 +206,7 @@ class MistralSelfAttention(torch.nn.Module):
         if True:
             attn = torch.matmul(q_stm, k_stm.transpose(2, 3)).to(dtype=f32) * self.attn_scale
             attn = attn * self.mask_w + self.mask_b
-            if self.impl == MistralImpl.TorchBuiltin:
-                attn = torch.nn.functional.softmax(attn, 3)
-            elif self.impl == MistralImpl.Debug:
-                max_attn, _ = torch.max(attn, 3, keepdim=True)
-                exp_attn = torch.exp(attn - max_attn)
-                sum_exp_attn = torch.sum(exp_attn, 3, keepdim=True)
-                attn = (exp_attn / sum_exp_attn)
-            else:
-                raise NotImplementedError
+            attn = torch.nn.functional.softmax(attn, 3)
             attn = attn.to(dtype=self.dtype)
             o_stm = torch.matmul(attn, v_stm)
         else:
@@ -234,18 +219,9 @@ class MistralSelfAttention(torch.nn.Module):
         stm = o_stm.reshape(stmshape)
         return stm
 
-def silu(x, impl = MistralImpl.Default):
-    if impl == MistralImpl.TorchBuiltin:
-        return torch.nn.functional.silu(x)
-    elif impl == MistralImpl.Debug:
-        return x / (torch.exp(-x) + 1.0)
-    else:
-        raise NotImplementedError
-
 class MistralMLP(torch.nn.Module):
-    def __init__(self, cfg, consts, dtype = f16, device = None, impl = MistralImpl.Default, layer_idx = None):
+    def __init__(self, cfg, consts, dtype = f16, device = None, layer_idx = None):
         super().__init__()
-        self.impl = impl
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.dtype = dtype
         self.consts = consts
@@ -262,21 +238,22 @@ class MistralMLP(torch.nn.Module):
         if self.inv_linear_scale is not None:
             gate_stm *= self.inv_linear_scale
             up_stm *= self.inv_linear_scale
-        gate_stm = silu(gate_stm, self.impl)
+        gate_stm = torch.nn.functional.silu(gate_stm)
         down_stm = gate_stm * up_stm
         down_stm = self.down_proj(down_stm)
         if self.inv_linear_scale is not None:
             down_stm *= self.inv_linear_scale
-        stm = down_stm.reshape(stmshape)
+        stm = down_stm
+        stm = stm.reshape(stmshape)
         return stm
 
 class MistralLayer(torch.nn.Module):
-    def __init__(self, cfg, consts, dtype = f16, device = None, impl = MistralImpl.Default, layer_idx = None):
+    def __init__(self, cfg, consts, dtype = f16, device = None, layer_idx = None):
         super().__init__()
         self.input_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "pre_attn")
-        self.self_attn = MistralSelfAttention(cfg, consts, dtype, device, impl, layer_idx)
+        self.self_attn = MistralSelfAttention(cfg, consts, dtype, device, layer_idx)
         self.post_attention_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "postattn")
-        self.mlp = MistralMLP(cfg, consts, dtype, device, impl, layer_idx)
+        self.mlp = MistralMLP(cfg, consts, dtype, device, layer_idx)
 
     def forward(self, stm):
         residual_stm = stm
@@ -306,16 +283,10 @@ class Mistral(torch.nn.Module):
         self.dtype = dtype
         consts = MistralLazyConstants(cfg, max_seq_len)
         self.consts = consts
-        impl = MistralImpl.Default
-        if impl == MistralImpl.TorchBuiltin:
-            self.embed_tokens = torch.nn.Embedding(cfg.tok_dim, self.inner_dim, dtype=dtype, device=device)
-        elif impl == MistralImpl.Debug:
-            self.embed_tokens = MistralTokenEmbedding(cfg, dtype, device)
-        else:
-            raise NotImplementedError
+        self.embed_tokens = torch.nn.Embedding(cfg.tok_dim, self.inner_dim, dtype=dtype, device=device)
         self.layers = torch.nn.ModuleList()
         for layer_idx in range(cfg.num_layer):
-            self.layers.append(MistralLayer(cfg, consts, dtype, device, impl, layer_idx))
+            self.layers.append(MistralLayer(cfg, consts, dtype, device, layer_idx))
         self.norm = MistralRMSNorm(cfg, dtype, device)
         self.lm_head = torch.nn.Linear(self.inner_dim, cfg.tok_dim, bias=False, dtype=dtype, device=device)
 
@@ -445,12 +416,12 @@ class CachedMistralSelfAttention(torch.nn.Module):
         return stm
 
 class CachedMistralLayer(torch.nn.Module):
-    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = f16, device = None, impl = MistralImpl.Default, layer_idx = None):
+    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = f16, device = None, layer_idx = None):
         super().__init__()
         self.input_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "pre_attn")
         self.self_attn = CachedMistralSelfAttention(cfg, max_batch_size, max_seq_len, consts, dtype, device, layer_idx)
         self.post_attention_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "postattn")
-        self.mlp = MistralMLP(cfg, consts, dtype, device, impl, layer_idx)
+        self.mlp = MistralMLP(cfg, consts, dtype, device, layer_idx)
 
     def forward(self, stm, seq_start = 0, cache_tag = None):
         residual_stm = stm
@@ -480,11 +451,10 @@ class CachedMistral(torch.nn.Module):
         self.dtype = dtype
         consts = MistralLazyConstants(cfg, max_seq_len)
         self.consts = consts
-        impl = MistralImpl.Default
         self.embed_tokens = torch.nn.Embedding(cfg.tok_dim, self.inner_dim, dtype=dtype, device=device)
         self.layers = torch.nn.ModuleList()
         for layer_idx in range(cfg.num_layer):
-            self.layers.append(CachedMistralLayer(cfg, max_batch_size, max_seq_len, consts, dtype, device, impl, layer_idx))
+            self.layers.append(CachedMistralLayer(cfg, max_batch_size, max_seq_len, consts, dtype, device, layer_idx))
         self.norm = MistralRMSNorm(cfg, dtype, device)
         self.lm_head = torch.nn.Linear(self.inner_dim, cfg.tok_dim, bias=False, dtype=dtype, device=device)
 
