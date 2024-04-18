@@ -2,6 +2,8 @@ from lm_torch.prelude import gpu, smp, i64
 
 import torch
 
+from typing import List
+
 class Context:
     def __init__(self, tag, tokenizer, model, max_seq_len, device = gpu):
         self.tokenizer = tokenizer
@@ -13,7 +15,7 @@ class Context:
         self.tok = []
         self.buf = []
 
-    def rollout(self, text_buf: List[str], stop_ctx: str):
+    def rollout(self, text_buf: List[str], stop: str = None):
         assert len(text_buf) > 0
 
         if self.restart > 0:
@@ -41,8 +43,9 @@ class Context:
         assert start + len(text_tok) <= self.max_seq_len
         text_tok = torch.asarray(text_tok, dtype=i64, device=smp).reshape((1, -1))
 
-        stop_pat = "</{}>\n".format(stop_ctx)
-        stop_buf = None
+        if stop is not None:
+            stop_pat = "</{}>\n".format(stop)
+            stop_buf = None
 
         torch.cuda.empty_cache()
         while True:
@@ -62,15 +65,17 @@ class Context:
                     s = self.tokenizer[t]
                     print("{}".format(s), end="", flush=True)
                     self.buf.append(s)
-                    if stop_buf is None:
-                        if s.find("</") == 0:
-                            stop_buf = s
-                    else:
-                        stop_buf += s
-                        if stop_buf.find(stop_pat) == 0:
-                            break
-                        elif len(stop_buf) >= len(stop_pat):
-                            stop_buf = None
+                    if stop is not None:
+                        if stop_buf is None:
+                            if s.find("</") == 0:
+                                stop_buf = s
+                        else:
+                            stop_buf += s
+                        if stop_buf is not None:
+                            if stop_buf.find(stop_pat) == 0:
+                                break
+                            elif len(stop_buf) >= len(stop_pat):
+                                stop_buf = None
                     start += in_len
                     if start >= self.max_seq_len:
                         break
