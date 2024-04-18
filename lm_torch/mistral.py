@@ -7,7 +7,7 @@ __all__ = [
     "CachedLlama",
 ]
 
-from .prelude import f16, f32, i64, cpu
+from .prelude import bf16, f32, i64, cpu
 
 import torch
 
@@ -109,7 +109,7 @@ class MistralLazyConstants:
                 mod.inv_linear_scale = None
 
 class MistralTokenEmbedding(torch.nn.Module):
-    def __init__(self, cfg, dtype = f16, device = None):
+    def __init__(self, cfg, dtype = bf16, device = None):
         super().__init__()
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.weight = torch.nn.parameter.Parameter(torch.empty((cfg.tok_dim, self.inner_dim), dtype=dtype, device=device))
@@ -123,7 +123,7 @@ class MistralTokenEmbedding(torch.nn.Module):
         return stm
 
 class MistralRMSNorm(torch.nn.Module):
-    def __init__(self, cfg, dtype = f16, device = None, layer_idx = None, label = None):
+    def __init__(self, cfg, dtype = bf16, device = None, layer_idx = None, label = None):
         super().__init__()
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.eps = cfg.rms_norm_eps
@@ -147,7 +147,7 @@ class MistralRMSNorm(torch.nn.Module):
         return stm
 
 class MistralRotaryEmbedding(torch.nn.Module):
-    def __init__(self, cfg, consts, dtype = f16, device = None, layer_idx = None):
+    def __init__(self, cfg, consts, dtype = bf16, device = None, layer_idx = None):
         super().__init__()
         self.dtype = dtype
         self.consts = consts
@@ -164,7 +164,7 @@ class MistralRotaryEmbedding(torch.nn.Module):
         return stm
 
 class MistralSelfAttention(torch.nn.Module):
-    def __init__(self, cfg, consts, dtype = f16, device = None, layer_idx = None):
+    def __init__(self, cfg, consts, dtype = bf16, device = None, layer_idx = None):
         super().__init__()
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.num_kv_head = cfg.num_head // cfg.q_group
@@ -220,7 +220,7 @@ class MistralSelfAttention(torch.nn.Module):
         return stm
 
 class MistralMLP(torch.nn.Module):
-    def __init__(self, cfg, consts, dtype = f16, device = None, layer_idx = None):
+    def __init__(self, cfg, consts, dtype = bf16, device = None, layer_idx = None):
         super().__init__()
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.dtype = dtype
@@ -248,7 +248,7 @@ class MistralMLP(torch.nn.Module):
         return stm
 
 class MistralLayer(torch.nn.Module):
-    def __init__(self, cfg, consts, dtype = f16, device = None, layer_idx = None):
+    def __init__(self, cfg, consts, dtype = bf16, device = None, layer_idx = None):
         super().__init__()
         self.input_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "pre_attn")
         self.self_attn = MistralSelfAttention(cfg, consts, dtype, device, layer_idx)
@@ -267,7 +267,7 @@ class MistralLayer(torch.nn.Module):
         return stm
 
 class Mistral(torch.nn.Module):
-    def __init__(self, cfg, batch_size, max_seq_len, head = "lm", dtype = f16, device = None):
+    def __init__(self, cfg, batch_size, max_seq_len, head = "lm", dtype = bf16, device = None):
         super().__init__()
         self.tok_dim = cfg.tok_dim
         self.num_head = cfg.num_head
@@ -321,7 +321,7 @@ class Mistral(torch.nn.Module):
         return tuple(out)
 
 class CachedMistralSelfAttention(torch.nn.Module):
-    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = f16, device = None, layer_idx = None):
+    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = bf16, device = None, layer_idx = None):
         super().__init__()
         self.inner_dim = cfg.num_head * cfg.head_dim
         self.head_dim = cfg.head_dim
@@ -416,7 +416,7 @@ class CachedMistralSelfAttention(torch.nn.Module):
         return stm
 
 class CachedMistralLayer(torch.nn.Module):
-    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = f16, device = None, layer_idx = None):
+    def __init__(self, cfg, max_batch_size, max_seq_len, consts, dtype = bf16, device = None, layer_idx = None):
         super().__init__()
         self.input_layernorm = MistralRMSNorm(cfg, dtype, device, layer_idx, label = "pre_attn")
         self.self_attn = CachedMistralSelfAttention(cfg, max_batch_size, max_seq_len, consts, dtype, device, layer_idx)
@@ -435,7 +435,7 @@ class CachedMistralLayer(torch.nn.Module):
         return stm
 
 class CachedMistral(torch.nn.Module):
-    def __init__(self, cfg, max_batch_size, max_seq_len, head = "lm", dtype = f16, device = None):
+    def __init__(self, cfg, max_batch_size, max_seq_len, head = "lm", dtype = bf16, device = None):
         super().__init__()
         self.tok_dim = cfg.tok_dim
         self.num_head = cfg.num_head
