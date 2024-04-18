@@ -1,7 +1,7 @@
 __all__ = [
     "SentencePieceTokenizer",
     "MistralTokenizer",
-    "LlamaTokenizer",
+    #"LlamaTokenizer",
 ]
 
 import sentencepiece as sp
@@ -53,9 +53,8 @@ class SentencePieceTokenizer:
 
     def __call__(self, text: str, prepend: Optional[bool] = True) -> List[int]:
         if prepend is None or not prepend:
-            #tok = self.spp.Encode("<p>{}".format(text), add_bos = True)
-            #assert tok[:4] == [1, 523, 28720, 28767]
             tok = self.spp.Encode("0{}".format(text), add_bos = True)
+            # NB: hard coded.
             if tok[:3] != [1, 28705, 28734]:
                 print("DEBUG:  SentencePieceTokenizer: tok = {}".format(tok[:5]))
             assert tok[:3] == [1, 28705, 28734]
@@ -65,4 +64,4 @@ class SentencePieceTokenizer:
         return tok
 
 MistralTokenizer = SentencePieceTokenizer
-LlamaTokenizer = SentencePieceTokenizer
+#LlamaTokenizer = SentencePieceTokenizer
